@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Neon Rider</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #050510; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Настройки ---
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// Физика
+const GRAVITY = 0.5;
+const FRICTION = 0.98;
+const ACCELERATION = 0.2;
+const MAX_SPEED = 12;
+
+// Состояние игры
+let gameState = 'playing'; // 'playing', 'gameover'
+let cameraX = 0;
+let distance = 0;
+let score = 0;
+
+// Байк
+const bike = {
+    x: canvas.width * 0.3, // Позиция на экране (фиксирована)
+    y: canvas.height * 0.5,
+    vx: 5, // Скорость по X
+    vy: 0, // Скорость по Y
+    angle: 0, // Угол наклона (радианы)
+    width: 40,
+    height: 20,
+    grounded: false
+};
+
+// Трасса (массив точек в мировых координатах)
+let trackPoints = [];
+let segmentLength = 100; // Длина одного сегмента
+
+// --- Генерация трассы ---
+function generateTrack(startX, startY) {
+    let currentX = startX;
+    let currentY = startY;
+    let angle = 0; // Текущий угол в градусах
+
+    for (let i = 0; i < 100; i++) { // Генерируем 100 сегментов вперёд
+        // Плавное изменение угла (холмы)
+        angle += (Math.random() - 0.5) * 20; 
+        angle = Math.max(-45, Math.min(45, angle)); // Ограничиваем угол
+
+        const rad = angle * Math.PI / 180;
+        const nextX = currentX + Math.cos(rad) * segmentLength;
+        const nextY = currentY + Math.sin(rad) * segmentLength;
+
+        trackPoints.push({ x: currentX, y: currentY, angle: angle });
+        currentX = nextX;
+        currentY = nextY;
+    }
+}
+
+// Инициализация
+generateTrack(0, canvas.height * 0.5);
+
+// --- Ввод ---
+let keys = {};
+window.addEventListener('keydown', (e) => keys[e.code] = true);
+window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// Для мобильных устройств (тап = газ)
+window.addEventListener('touchstart', () => keys['Space'] = true);
+window.addEventListener('touchend', () => keys['Space'] = false);
+
+// --- Игровой цикл ---
+function update() {
+    if (gameState !== 'playing') return;
+
+    // 1. Применяем гравитацию
+    bike.vy += GRAVITY;
+
+    // 2. Управление (Газ)
+    if (keys['Space'] || keys['ArrowUp'] || keys['KeyW']) {
+        bike.vx += ACCELERATION;
+        // Немного задираем нос при газе (эффект вилли)
+        bike.angle -= 0.02;
+    } else {
+        // Торможение
+        bike.vx *= FRICTION;
+    }
+
+    // Ограничение скорости
+    bike.vx = Math.min(bike.vx, MAX_SPEED);
+
+    // 3. Обновляем позицию
+    bike.y += bike.vy;
+    bike.x += bike.vx;
+    cameraX += bike.vx;
+    distance += bike.vx;
+
+    // 4. Простая коллизия с землёй (для прототипа)
+    // В реальной игре нужно проверять пересечение с сегментами трассы
+    const groundY = canvas.height * 0.8; // Условная земля
+    if (bike.y > groundY) {
+        bike.y = groundY;
+        bike.vy = 0;
+        bike.grounded = true;
+        
+        // Выравниваем угол на земле
+        bike.angle *= 0.9;
+        
+        // Небольшая тряска при касании
+        if (bike.vy > 5) {
+            // Эффект частиц (пыль)
+        }
+    } else {
+        bike.grounded = false;
+    }
+
+    // 5. Проверка на падение (если байк ушёл за экран)
+    if (bike.y > canvas.height + 100) {
+        gameState = 'gameover';
+    }
+
+    // 6. Проверка на прохождение сегментов (для счёта)
+    const passedSegments = Math.floor(distance / segmentLength);
+    score = passedSegments;
+}
+
+function draw() {
+    // Очистка
+    ctx.fillStyle = '#050510';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // --- Рисуем трассу (неоновые линии) ---
+    ctx.strokeStyle = '#f0f'; // Маджента
+    ctx.lineWidth = 4;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#f0f';
+    ctx.beginPath();
+
+    let firstPoint = true;
+    for (let i = 0; i < trackPoints.length; i++) {
+        const p = trackPoints[i];
+        // Преобразование мировых координат в экранные
+        const screenX = p.x - cameraX + bike.x;
+        const screenY = p.y;
+
+        // Не рисуем точки, которые далеко за экраном
+        if (screenX < -100 || screenX > canvas.width + 100) continue;
+
+        if (firstPoint) {
+            ctx.moveTo(screenX, screenY);
+            firstPoint = false;
+        } else {
+            ctx.lineTo(screenX, screenY);
+        }
+    }
+    ctx.stroke();
+
+    // --- Рисуем байк (неоновый прямоугольник) ---
+    ctx.save();
+    ctx.translate(bike.x, bike.y);
+    ctx.rotate(bike.angle);
+    
+    // Светящийся корпус
+    ctx.fillStyle = '#0ff';
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = '#0ff';
+    ctx.fillRect(-bike.width/2, -bike.height/2, bike.width, bike.height);
+    
+    // Колёса (точки)
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = '#fff';
+    ctx.beginPath();
+    ctx.arc(-bike.width/2 + 5, bike.height/2, 5, 0, Math.PI*2);
+    ctx.arc(bike.width/2 - 5, bike.height/2, 5, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // --- UI (Счёт) ---
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+    ctx.shadowBlur = 0;
+    ctx.fillText(`SCORE: ${Math.floor(score)}`, 20, 40);
+    ctx.fillText(`DIST: ${Math.floor(distance/10)}m`, 20, 70);
+
+    if (gameState === 'gameover') {
+        ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#f0f';
+        ctx.font = 'bold 40px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
+        ctx.font = '20px monospace';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('Нажми R для рестарта', canvas.width/2, canvas.height/2 + 40);
+        ctx.textAlign = 'left';
+    }
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+// Рестарт
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyR' && gameState === 'gameover') {
+        location.reload();
+    }
+});
+
+// Запуск
+loop();
+</script>
+</body>
+</html>
