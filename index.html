@@ -3,20 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Neon Rider v5</title>
+    <title>Neon Rider v6</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #050510; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        body { margin: 0; padding: 0; overflow: hidden; background: #050510; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         canvas { display: block; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; font-family: monospace; pointer-events: none; text-shadow: 0 0 10px #0ff; }
-        #coins-ui { color: #ffd700; font-size: 24px; font-weight: bold; margin-top: 5px; text-shadow: 0 0 10px #ffd700; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; }
+        .stat { font-size: 28px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; }
+        #score { color: #0ff; text-shadow: 0 0 15px #0ff; }
+        #coins-ui { color: #ffd700; font-size: 20px; font-weight: bold; margin-top: 5px; text-shadow: 0 0 10px #ffd700; }
+        #dist { color: #0f0; text-shadow: 0 0 10px #0f0; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     <div id="ui">
-        <div style="font-size: 32px; font-weight: bold; color: #0ff;">SCORE: <span id="score">0</span></div>
+        <div class="stat">SCORE: <span id="score">0</span></div>
         <div id="coins-ui">🪙 <span id="coins">0</span></div>
-        <div style="font-size: 18px; color: #0f0;">DIST: <span id="dist">0</span>m</div>
+        <div class="stat" style="font-size: 18px;">DIST: <span id="dist">0</span>m</div>
     </div>
 
 <script>
@@ -25,33 +28,28 @@ const ctx = canvas.getContext('2d');
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// --- Звуки (Web Audio API) ---
+// --- Звуки ---
 let audioCtx = null;
-function initAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}
 function playCoinSound() {
-    initAudio();
-    if (!audioCtx) return;
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    // Восходящий звук (как "дзынь")
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-    osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.1); // E6
-    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime); // C6
+    osc.frequency.exponentialRampToValueAtTime(1567.98, audioCtx.currentTime + 0.1); // G6
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
     osc.connect(gain);
     gain.connect(audioCtx.destination);
     osc.start();
-    osc.stop(audioCtx.currentTime + 0.1);
+    osc.stop(audioCtx.currentTime + 0.15);
 }
 
-// --- Настройки физики (улучшенные) ---
-const GRAVITY = 0.6; // Чуть сильнее гравитация для стабильности
-const ENGINE_FORCE = 0.8; // Ускорение
-const MAX_SPEED = 20;
-const ANGLE_SMOOTHING = 0.15; // Плавность поворота
+// --- Настройки ---
+const GRAVITY = 0.6;
+const ENGINE_FORCE = 0.7;
+const MAX_SPEED = 22;
+const ANGLE_SMOOTHING = 0.2;
 
 let gameState = 'playing';
 let camera = { x: 0, y: 0 };
@@ -64,50 +62,66 @@ let segmentLength = 120;
 let coins = [];
 
 const bike = {
-    x: 0, 
-    y: 0,
-    vx: 10,
-    vy: 0,
-    angle: 0,
-    width: 55,
-    height: 20,
-    wheelBase: 35,
-    wheelRadius: 9
+    x: 0, y: 0, vx: 12, vy: 0, angle: 0,
+    width: 60, height: 25, wheelBase: 45, wheelRadius: 10
 };
 
 let trailParticles = [];
 
+// --- Генерация трассы с петлями ---
 function generateTrack(startX, startY) {
     let currentX = startX;
     let currentY = startY;
     let angle = 0;
 
-    for (let i = 0; i < 50; i++) {
-        // Делаем горки более плавными
-        angle += (Math.random() - 0.5) * 15; 
-        angle = Math.max(-30, Math.min(30, angle));
-        
-        const rad = angle * Math.PI / 180;
-        const nextX = currentX + Math.cos(rad) * segmentLength;
-        const nextY = currentY + Math.sin(rad) * segmentLength;
-        
-        trackPoints.push({ x: currentX, y: currentY });
-        currentX = nextX;
-        currentY = nextY;
-
-        // Генерация монеток (50% шанс на сегмент)
-        if (Math.random() < 0.5) {
-            const t = Math.random() * 0.8 + 0.1; // Позиция на сегменте (от 10% до 90%)
-            const coinX = currentX - Math.cos(rad) * segmentLength * (1-t);
-            const coinY = currentY - Math.sin(rad) * segmentLength * (1-t) - 40; // Парим над трассой
-            coins.push({ x: coinX, y: coinY, collected: false, size: 12 });
+    for (let i = 0; i < 60; i++) {
+        // Каждые 10 сегментов делаем петлю (как в Rider)
+        if (i > 0 && i % 15 === 0) {
+            // Генерируем петлю (360 градусов)
+            const loopRadius = 100;
+            const loopCenterX = currentX + Math.cos(angle * Math.PI / 180) * loopRadius;
+            const loopCenterY = currentY + Math.sin(angle * Math.PI / 180) * loopRadius;
+            
+            for (let a = 0; a <= 360; a += 30) {
+                const rad = (angle - 90 + a) * Math.PI / 180;
+                trackPoints.push({
+                    x: loopCenterX + Math.cos(rad) * loopRadius,
+                    y: loopCenterY + Math.sin(rad) * loopRadius
+                });
+            }
+            // Обновляем текущую позицию после петли
+            currentX = loopCenterX + Math.cos((angle + 270) * Math.PI / 180) * loopRadius;
+            currentY = loopCenterY + Math.sin((angle + 270) * Math.PI / 180) * loopRadius;
+        } else {
+            // Обычные горки
+            angle += (Math.random() - 0.5) * 15; 
+            angle = Math.max(-35, Math.min(35, angle));
+            
+            const rad = angle * Math.PI / 180;
+            const nextX = currentX + Math.cos(rad) * segmentLength;
+            const nextY = currentY + Math.sin(rad) * segmentLength;
+            
+            trackPoints.push({ x: currentX, y: currentY });
+            
+            // Монетки
+            if (Math.random() < 0.6) {
+                const t = Math.random() * 0.6 + 0.2;
+                coins.push({
+                    x: currentX + (nextX - currentX) * t,
+                    y: currentY + (nextY - currentY) * t - 35,
+                    collected: false, size: 10
+                });
+            }
+            
+            currentX = nextX;
+            currentY = nextY;
         }
     }
 }
 
 generateTrack(0, canvas.height * 0.6);
 bike.x = trackPoints[0].x + 100;
-bike.y = trackPoints[1].y - 30;
+bike.y = trackPoints[1].y - 40;
 
 // --- Управление ---
 let keys = {};
@@ -120,19 +134,15 @@ window.addEventListener('touchend', (e) => { e.preventDefault(); keys['Space'] =
 function update() {
     if (gameState !== 'playing') return;
 
-    // Гравитация
     bike.vy += GRAVITY;
 
-    // Управление
     if (keys['Space'] || keys['ArrowUp'] || keys['KeyW']) {
         bike.vx += Math.cos(bike.angle) * ENGINE_FORCE;
         bike.vy += Math.sin(bike.angle) * ENGINE_FORCE;
     } else {
-        // Плавное трение
         bike.vx *= 0.99;
     }
 
-    // Ограничение скорости
     const speed = Math.sqrt(bike.vx*bike.vx + bike.vy*bike.vy);
     if (speed > MAX_SPEED) {
         bike.vx = (bike.vx / speed) * MAX_SPEED;
@@ -142,7 +152,7 @@ function update() {
     bike.x += bike.vx;
     bike.y += bike.vy;
 
-    // Коллизия
+    // Коллизия с трассой (поиск ближайшей линии)
     let onGround = false;
     let groundAngle = bike.angle;
     
@@ -159,94 +169,85 @@ function update() {
         const p1 = trackPoints[i];
         const p2 = trackPoints[i+1];
         
-        if (fx > p1.x && fx < p2.x) {
+        // Проверка для переднего колеса
+        if (fx > Math.min(p1.x, p2.x) && fx < Math.max(p1.x, p2.x)) {
             const lineY = p1.y + (p2.y - p1.y) * ((fx - p1.x) / (p2.x - p1.x));
-            if (fy > lineY - bike.wheelRadius) { 
-                const d = fy - lineY;
-                if (d < closestDist) {
-                    closestDist = d;
-                    hitPoint = { x: fx, y: lineY, seg: p1, nextSeg: p2 };
-                    onGround = true;
-                }
+            const d = Math.abs(fy - lineY);
+            if (d < closestDist && d < bike.wheelRadius + 15) { // +15 для мягкости
+                closestDist = d;
+                hitPoint = { x: fx, y: lineY, seg: p1, nextSeg: p2, side: fy > lineY ? 1 : -1 };
+                onGround = true;
             }
         }
-        if (rx > p1.x && rx < p2.x) {
+        // Проверка для заднего колеса
+        if (rx > Math.min(p1.x, p2.x) && rx < Math.max(p1.x, p2.x)) {
             const lineY = p1.y + (p2.y - p1.y) * ((rx - p1.x) / (p2.x - p1.x));
-            if (ry > lineY - bike.wheelRadius) {
-                const d = ry - lineY;
-                if (d < closestDist) {
-                    closestDist = d;
-                    hitPoint = { x: rx, y: lineY, seg: p1, nextSeg: p2 };
-                    onGround = true;
-                }
+            const d = Math.abs(ry - lineY);
+            if (d < closestDist && d < bike.wheelRadius + 15) {
+                closestDist = d;
+                hitPoint = { x: rx, y: lineY, seg: p1, nextSeg: p2, side: ry > lineY ? 1 : -1 };
+                onGround = true;
             }
         }
     }
 
     if (onGround && hitPoint) {
-        // Выталкиваем наверх (мягко)
-        bike.y -= closestDist - bike.wheelRadius;
-        if (bike.vy > 0) bike.vy *= 0.5; // Гасим удар, но не полностью
+        // Прилипаем к трассе (выталкиваем наверх)
+        const pushForce = (closestDist - bike.wheelRadius) * hitPoint.side;
+        bike.y -= pushForce;
         
-        // Плавный наклон
+        if (bike.vy * hitPoint.side > 0) bike.vy *= 0.5; // Гасим удар
+        
         const targetAngle = Math.atan2(hitPoint.nextSeg.y - hitPoint.seg.y, hitPoint.nextSeg.x - hitPoint.seg.x);
         bike.angle += (targetAngle - bike.angle) * ANGLE_SMOOTHING;
 
-        // Следы
-        if (Math.random() < 0.3) {
+        // Частицы
+        if (Math.random() < 0.4) {
             trailParticles.push({
-                x: rx + camera.x,
-                y: ry + camera.y,
-                life: 1,
-                color: '#0ff'
+                x: rx + camera.x, y: ry + camera.y, life: 1, color: '#0ff'
             });
         }
     } else {
-        // В воздухе — плавный поворот
-        bike.angle += bike.vx * 0.003;
+        bike.angle += bike.vx * 0.005;
     }
 
-    // Сбор монеток
+    // Сбор монеток (с магнитом)
     for (let coin of coins) {
         if (coin.collected) continue;
         const dist = Math.hypot((bike.x - coin.x), (bike.y - coin.y));
-        if (dist < bike.width/2 + coin.size) {
+        // Если близко - притягиваем
+        if (dist < 100) {
+            coin.x += (bike.x - coin.x) * 0.15;
+            coin.y += (bike.y - coin.y) * 0.15;
+        }
+        // Если совсем близко - собираем
+        if (dist < bike.width/2 + coin.size + 10) {
             coin.collected = true;
             coinsCollected++;
-            playCoinSound(); // Звук!
+            playCoinSound();
             document.getElementById('coins').innerText = coinsCollected;
             
-            // Эффект вспышки при сборе
-            for (let i = 0; i < 5; i++) {
+            // Вспышка
+            for (let i = 0; i < 8; i++) {
                 trailParticles.push({
-                    x: coin.x + camera.x,
-                    y: coin.y + camera.y,
-                    life: 1,
-                    color: '#ffd700'
+                    x: coin.x + camera.x, y: coin.y + camera.y, life: 1, color: '#ffd700'
                 });
             }
         }
     }
 
-    // Обновление частиц
-    for (let i = trailParticles.length - 1; i >= 0; i--) {
-        trailParticles[i].life -= 0.03;
-        if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
-    }
-
     // Камера
     const targetCamX = bike.x - canvas.width * 0.35;
     const targetCamY = bike.y - canvas.height * 0.55;
-    camera.x += (targetCamX - camera.x) * 0.12;
-    camera.y += (targetCamY - camera.y) * 0.12;
+    camera.x += (targetCamX - camera.x) * 0.1;
+    camera.y += (targetCamY - camera.y) * 0.1;
 
-    // Генерация новой трассы и монет
+    // Бесконечная генерация (упрощенная для прототипа)
     if (bike.x > trackPoints[trackPoints.length - 1].x - canvas.width) {
         const last = trackPoints[trackPoints.length - 1];
         const prev = trackPoints[trackPoints.length - 2];
         let angle = Math.atan2(last.y - prev.y, last.x - prev.x) * 180 / Math.PI;
         angle += (Math.random() - 0.5) * 20;
-        angle = Math.max(-30, Math.min(30, angle));
         
         const rad = angle * Math.PI / 180;
         trackPoints.push({
@@ -254,17 +255,22 @@ function update() {
             y: last.y + Math.sin(rad) * segmentLength
         });
 
-        // Спавн монет на новых сегментах
         if (Math.random() < 0.6) {
-            const t = Math.random() * 0.8 + 0.1;
-            const coinX = last.x + Math.cos(rad) * segmentLength * t;
-            const coinY = last.y + Math.sin(rad) * segmentLength * t - 40;
-            coins.push({ x: coinX, y: coinY, collected: false, size: 12 });
+            coins.push({
+                x: last.x + Math.cos(rad) * segmentLength * 0.5,
+                y: last.y + Math.sin(rad) * segmentLength * 0.5 - 35,
+                collected: false, size: 10
+            });
         }
         
-        if (trackPoints.length > 100) trackPoints.shift();
-        // Удаляем старые монеты
+        if (trackPoints.length > 150) trackPoints.shift();
         coins = coins.filter(c => c.x > camera.x - 100);
+    }
+
+    // Частицы
+    for (let i = trailParticles.length - 1; i >= 0; i--) {
+        trailParticles[i].life -= 0.03;
+        if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
     }
 
     // Счёт
@@ -273,7 +279,6 @@ function update() {
     document.getElementById('score').innerText = score;
     document.getElementById('dist').innerText = Math.floor(distance/10);
 
-    // Проигрыш
     if (bike.y > camera.y + canvas.height + 200) {
         gameState = 'gameover';
     }
@@ -283,27 +288,27 @@ function draw() {
     ctx.fillStyle = '#050510';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // --- Трасса (Новый цвет: Ярко-зеленый неон) ---
+    // --- Трасса ---
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     
-    // Подложка
-    ctx.strokeStyle = 'rgba(0, 255, 100, 0.15)';
-    ctx.lineWidth = 40;
+    // Объёмная тень трассы
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.lineWidth = 30;
     ctx.beginPath();
     let first = true;
     for (let i = 0; i < trackPoints.length; i++) {
         const p = trackPoints[i];
         const sx = p.x - camera.x;
-        const sy = p.y - camera.y;
+        const sy = p.y - camera.y + 10; // Сдвиг для тени
         if (sx < -canvas.width || sx > canvas.width * 2) continue;
         if (first) { ctx.moveTo(sx, sy); first = false; } else { ctx.lineTo(sx, sy); }
     }
     ctx.stroke();
 
-    // Линия
-    ctx.strokeStyle = '#0f0'; // Зеленый
-    ctx.lineWidth = 4;
+    // Основная линия
+    ctx.strokeStyle = '#0f0';
+    ctx.lineWidth = 6;
     ctx.shadowBlur = 20;
     ctx.shadowColor = '#0f0';
     ctx.beginPath();
@@ -325,7 +330,6 @@ function draw() {
         const sy = coin.y - camera.y;
         if (sx < -50 || sx > canvas.width + 50) continue;
 
-        // Свечение
         ctx.fillStyle = '#ffd700';
         ctx.shadowBlur = 15;
         ctx.shadowColor = '#ffd700';
@@ -333,7 +337,6 @@ function draw() {
         ctx.arc(sx, sy, coin.size, 0, Math.PI * 2);
         ctx.fill();
         
-        // Внутренний блик
         ctx.fillStyle = '#fff';
         ctx.shadowBlur = 0;
         ctx.beginPath();
@@ -352,37 +355,55 @@ function draw() {
     }
     ctx.globalAlpha = 1.0;
 
-    // --- Байк ---
+    // --- Байк (Детализированный) ---
     ctx.save();
-    ctx.translate(bike.x - camera.x, bike.y - camera.y + bike.wheelRadius);
+    // Позиционируем байк так, чтобы колёса были НА линии
+    ctx.translate(bike.x - camera.x, bike.y - camera.y);
     ctx.rotate(bike.angle);
 
-    // Тень
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    // Тень под байком
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.beginPath();
-    ctx.ellipse(0, 5, 30, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 10, 30, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Корпус
-    ctx.beginPath();
-    ctx.moveTo(-bike.wheelBase/2, 0);
-    ctx.lineTo(bike.wheelBase/2, 0);
-    ctx.lineTo(bike.wheelBase/2 - 5, -bike.height);
-    ctx.lineTo(-bike.wheelBase/2 + 5, -bike.height);
-    ctx.closePath();
-    
-    ctx.fillStyle = '#0ff'; // Голубой байк
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = '#0ff';
-    ctx.fill();
-
-    // Колёса
+    // Заднее колесо
     ctx.fillStyle = '#fff';
     ctx.shadowBlur = 10;
     ctx.shadowColor = '#fff';
     ctx.beginPath();
     ctx.arc(-bike.wheelBase/2, 0, bike.wheelRadius, 0, Math.PI*2);
+    ctx.fill();
+
+    // Переднее колесо
+    ctx.beginPath();
     ctx.arc(bike.wheelBase/2, 0, bike.wheelRadius, 0, Math.PI*2);
+    ctx.fill();
+
+    // Корпус (более детализированный)
+    ctx.fillStyle = '#0ff';
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#0ff';
+    ctx.beginPath();
+    ctx.moveTo(-bike.wheelBase/2, 0);
+    ctx.lineTo(bike.wheelBase/2, 0);
+    ctx.lineTo(bike.wheelBase/2 - 5, -bike.height);
+    ctx.lineTo(-bike.wheelBase/2 + 10, -bike.height - 5); // Изгиб
+    ctx.closePath();
+    ctx.fill();
+
+    // Вилка
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bike.wheelBase/2 - 5, 0);
+    ctx.lineTo(bike.wheelBase/2 - 10, -bike.height);
+    ctx.stroke();
+
+    // Седло
+    ctx.fillStyle = '#333';
+    ctx.beginPath();
+    ctx.ellipse(-10, -bike.height + 2, 12, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -392,7 +413,7 @@ function draw() {
         ctx.fillStyle = 'rgba(0,0,0,0.85)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#f0f';
-        ctx.font = 'bold 50px monospace';
+        ctx.font = '900 50px monospace';
         ctx.textAlign = 'center';
         ctx.shadowBlur = 20;
         ctx.shadowColor = '#f0f';
@@ -422,4 +443,4 @@ window.addEventListener('keydown', e => {
 loop();
 </script>
 </body>
-</html>
+    </html>
